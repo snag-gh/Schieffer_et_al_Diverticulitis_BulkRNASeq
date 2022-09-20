@@ -1,2 +1,2 @@
 # Schieffer_et_al_Diverticulitis_BulkRNASeq
-Reanalysis of the publicly available Bulk RNA Seq of diverticulitis samples. 
+Reanalysis of the publicly available Bulk RNA Seq of diverticulitis samples (Schieffer KM, Kline BP, Harris LR, Deiling S, Koltun WA, Yochum GS. A differential host response to viral infection defines a subset of earlier-onset diverticulitis patients. J Gastrointestin Liver Dis. 2018 Sep;27(3):249-255. doi: 10.15403/jgld.2014.1121.273.sch. PMID: 30240468; PMCID: PMC6340102.) 
