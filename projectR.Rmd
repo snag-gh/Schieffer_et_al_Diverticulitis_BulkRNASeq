@@ -1,0 +1,71 @@
+---
+title: "projectR analysis with diverticulitis bulk RNASeq"
+author: "Sushma Nagaraj"
+date: "3/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(stringr)
+source("~/src/devel/R/RNASeq/functions/functions.R")
+```
+
+```{r}
+fpkmMatrix <- read.csv(here("data", "fpkmMatrix.csv"), header = TRUE, row.names = 1)
+rownames(fpkmMatrix) <- str_sub(rownames(fpkmMatrix), 1, 15)
+fpkmMatrix <- log2(fpkmMatrix + 1)
+```
+
+```{r 6mo_LMMP patterns}
+#Patterns learned from 6mo LMMP
+weights <- read.csv("/data/users/sushmanagaraj/projects/singlecell/6mo_male_LMMP/cds_realigned_for_RNAvelocity/NMF/pattern_gene_weights.human_ensemblid.csv", header = TRUE, row.names = 1)
+table(duplicated(rownames(weights)))
+weights <- weights[,2:51]
+colnames(weights) <- paste0("Pattern_", c(1:ncol(weights)))
+```
+
+```{r linnarsson_zeisel patterns}
+weights <- read.csv(file = "/data/users/sushmanagaraj/projects/singlecell/Linnarsson_Zeisel/data_from_Liz/weights.humanid_added.csv", header = TRUE, row.names = 1)
+table(duplicated(weights$human_id))
+rownames(weights) <- weights$human_id
+weights <- weights[,-71]
+```
+
+```{r}
+library(projectR)
+
+#mypatt <- paste0("cellPattern", c("16", "27", "41", "32")) #MENS patterns from 6mo LMMP
+#mypatt <- paste0("Pattern_", c(1:50)) #All patterns from 6mo LMMP
+mypatt <- paste0("Pattern_", c(1:70)) #All Linnarsson patterns (mouse small intestine)
+proj <- lapply(mypatt, function(x) {
+  patt <- weights[,x]
+  names(patt) <- row.names(weights)
+  patt <- as.matrix(patt)
+  projectR(fpkmMatrix, loadings = patt, full=TRUE)
+})
+names(proj) <- mypatt
+
+projections <- do.call(rbind, lapply(proj, function(x) x$projection))
+row.names(projections) <- names(proj)
+
+pvals <- do.call(rbind, lapply(proj, function(x) x$pval))
+row.names(pvals) <- names(proj)
+#pvals <- -log10(pvals + 1)
+apply(pvals, 1, summary)
+boxplot(t(-log10(pvals + 1)), las = 2)
+```
+
+```{r boxplots}
+sample_groups <- colData(dds)[, c("description", "condition")]
+colnames(sample_groups) <- c("sample", "group")
+sample_groups <- as.data.frame(sample_groups)
+
+projection_boxplot(projections, sample_groups, outpath = here("projectR", "Linnarsson_Zeisel"), suff = "Linnarsson_patterns")
+div_ttests <- projection_ttest(mypatt, projections, sample_groups, "EO", "LO")
+
+write.csv(div_ttests, file = here("projectR", "Linnarsson_Zeisel", "diverticulitis_into_Linnarsson_patterns.ttests.csv"))
+```

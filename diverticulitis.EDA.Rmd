@@ -1,0 +1,124 @@
+---
+title: "Diverticulitis EDA"
+author: "Sushma Nagaraj"
+date: "3/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(stringr)
+source("~/src/devel/R/RNASeq/functions/functions.R")
+```
+
+```{r}
+library(GEOquery)
+gse <- getGEO("GSE111819")
+show(gse)
+
+sample_metadata <- pData(phenoData(gse[[1]]))
+getGEOSuppFiles("GSE111819", baseDir = here("data"))
+counts <- read.table(file = here("data", "GSE111819", "GSE111819_Yochum_Raw_Counts.txt.gz"), header = TRUE, row.names = 1)
+
+coldata <- sample_metadata[,c(25, 50:60)]
+colnames(coldata) <- gsub(":ch1", "", colnames(coldata))
+
+coldata.ord <- coldata[match(colnames(counts), coldata$description), ]
+all(coldata.ord$description == colnames(counts))
+rownames(coldata.ord) <- coldata.ord$description
+coldata.ord$condition <- "EO"
+coldata.ord$condition[coldata.ord$`age of diagnosis` >=65] <- "LO"
+```
+
+```{r}
+library(rtracklayer)
+gtf <- rtracklayer::import(here("data", "annotation", "gencode.v19.annotation.gtf.gz"), format = "gtf")
+genes_info <- elementMetadata(gtf)
+genes_info <- genes_info[genes_info$type == "gene", ]
+
+#Get total exonic length of each gene, indexed by Ensembl ID.
+library(GenomicFeatures)
+#hg19.ens <- makeTxDbFromUCSC(genome="hg19", tablename="ensGene")
+hg19.ens2 <- makeTxDbFromGFF(file = here("data", "annotation", "gencode.v19.annotation.gtf.gz"), format = "gtf")
+exonic <- exonsBy(hg19.ens2, by="gene")
+#red.exonic <- reduce(exonic)
+#exon.lengths <- sum(width(red.exonic))
+
+#genes <- rownames(counts)
+#genes <- as.data.frame(genes)
+#genes$length <- exon.lengths[match(genes$genes, names(exon.lengths))]
+
+#library(edgeR)
+all(row.names(counts) == genes$genes)
+myDGEList <- DGEList( counts = counts , genes = genes )
+myDGEList <- calcNormFactors(myDGEList)
+edgeR_fpkmMatrix <- rpkm(myDGEList)
+edgeR_fpkmMatrix <- log2(edgeR_fpkmMatrix + 1)
+```
+
+```{r}
+library(DESeq2)
+dds <- DESeqDataSetFromMatrix(countData = counts, colData = coldata.ord, design = ~condition)
+rowRanges(dds) <- exonic
+saveRDS(dds, file = here("data", "dds.rds"))
+
+fpkmMatrix <- fpkm(dds)
+write.csv(fpkmMatrix, file = here("data", "fpkmMatrix.csv"), row.names = TRUE)
+
+pc <- genes_info[genes_info$gene_type == "protein_coding", "gene_id"]
+dds.fil <- dds[rownames(dds) %in% pc, ]
+keep <- rowSums(counts(dds.fil) >=3) > 10
+dds.fil <- dds.fil[keep, ]
+
+rld <- rlog(dds.fil)
+
+boxplot(assay(rld), col = I(as.integer(rld$condition) + 1), las = 2)
+box.plot <- recordPlot()
+
+library(PCAtools)
+p <- pca(assay(rld), metadata = colData(rld))
+pca.plot <- biplot(p, colby = "condition", legendPosition = "right")
+pca.plot
+
+#removeResults(dds.fil)
+dds.fil$condition <- relevel(dds.fil$condition, ref = "LO")
+dds.fil <- DESeq(dds.fil)
+res <- results(dds.fil)
+summary(res)
+hist(res$pvalue)
+pval.plot <- recordPlot()
+
+res$gene_name <- genes_info[match(rownames(res), genes_info$gene_id), "gene_name"]
+resOrd <- res[order(res$pvalue), ]
+res0.05 <- resOrd[which(resOrd$padj <= 0.05 & abs(resOrd$log2FoldChange) > 0.6), ]
+write.csv(res0.05, file = here("results", "protein_coding_and_filter_low_counts", "EO-vs-LO", "DEgenes.EOvsLO.csv"), row.names = TRUE)
+
+library(EnhancedVolcano)
+DESeq2::plotMA(dds.fil)
+ma.plot <- recordPlot()
+volcano.plot <- EnhancedVolcano(res0.05, lab = res0.05$gene_name, x = 'log2FoldChange', y = 'padj')
+volcano.plot
+
+pdf(here("results", "protein_coding_and_filter_low_counts", "EO-vs-LO", "plots.pdf"))
+box.plot
+pca.plot
+pval.plot
+ma.plot
+volcano.plot
+dev.off()
+
+
+go_analysis_human(str_sub(rownames(res0.05), 1, 15), str_sub(rownames(res), 1, 15), outpath = here("results", "protein_coding_and_filter_low_counts", "EO-vs-LO"), suff = "all", net = TRUE, log2fc = res0.05$log2FoldChange, gene_names = res0.05$gene_name)
+
+upreg <- res0.05[res0.05$log2FoldChange > 0, ]
+downreg <- res0.05[res0.05$log2FoldChange < 0, ]
+
+go_analysis_human(str_sub(rownames(upreg), 1, 15), str_sub(rownames(res), 1, 15), outpath = here("results", "protein_coding_and_filter_low_counts", "EO-vs-LO"), suff = "up", net = FALSE)
+
+go_analysis_human(str_sub(rownames(downreg), 1, 15), str_sub(rownames(res), 1, 15), outpath = here("results", "protein_coding_and_filter_low_counts", "EO-vs-LO"), suff = "down", net = FALSE)
+
+gsea_analysis(resOrd, 4, 7, outpath = here(), suff = "EO-vs-LO")
+```
